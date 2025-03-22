@@ -8,7 +8,8 @@ Things to focus on:
 4. Decoding schemes?
 
 
-Build-From-Scratch Mini-GPT Project
+Ideas:
+
 1. Your Own Tokenizer Engine
 Build a custom tokenizer class from scratch (char-level + optional BPE).
 

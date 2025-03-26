@@ -1,50 +1,44 @@
-# MiniGPT
-Course Project for 'Bayesian Machine Learning'
+# README
 
-Things to focus on:
-1. Try out different tokenisers and see how the output changes: Sentence Tokenisers, BPE tokenisers
-2. Attention plots
-3. Model architecture- different feed forward models
-4. Decoding schemes?
+This repository builds upon [Andrej Karpathy’s nanoGPT](https://github.com/karpathy/nanoGPT) with the goal of extending and customizing the architecture to explore tokenizer design, hyperparameter optimization, and encoder-decoder modifications.
 
+## Project Goals
 
-Ideas:
+- **Tokenizer Comparison**  
+  Evaluate different tokenization strategies including:
+  - Character-level encoding
+  - Custom Byte Pair Encoding (BPE)
+  - Built-in `tiktoken` BPE tokenizer
 
-1. Your Own Tokenizer Engine
-Build a custom tokenizer class from scratch (char-level + optional BPE).
+- **Hyperparameter Optimization**  
+  Apply **Bayesian optimization** using Optuna to fine-tune training settings.
 
-Implement your own train(), encode(), decode().
+- **Encoder Addition**  
+  Modify the architecture to include an encoder. While the decoder is trained on Shakespeare's works (as in the original), the encoder is trained on modern pop music lyrics.  
+  **Note:** One challenge in this setup is the **lack of a suitable validation set** for the encoder-decoder configuration.
 
-Add visualizations: show how "hello world" gets tokenized step-by-step.
+## Dependencies
 
+Install all required packages with:
 
-2. Train a "Language Style Transfer" GPT
-Train on Shakespeare → fine-tune on modern text (e.g., Reddit comments, tweets).
+- `torch` — PyTorch for model training  
+- `tiktoken` — Tokenization library  
+- `optuna` — Bayesian hyperparameter optimization
 
-Compare how the same prompt sounds before and after fine-tuning.
+## How to Run
 
+1. **Data Preparation**  
+   Run `importing.py` to convert a CSV file of pop song lyrics into a cleaned `lyrics.txt` format.  
+   The Shakespeare dataset is loaded automatically in the relevant scripts and does not require preprocessing.
 
-3. "Explain Your Prediction" Mode
-At each generation step, print the top 3 most attended tokens.
+2. **Model Training and Testing**
+   - `gpt.py`: Baseline GPT model without encoder, used for initial testing.
+   - `hyperparameter_search.py`: Performs standalone hyperparameter optimization using Shakespeare data (`input.txt`).
+   - `encoder.py`: Extended version of the GPT model with a full encoder architecture.  
+     Takes both `input.txt` (Shakespeare) and `lyrics.txt` (pop lyrics) and outputs generated text to `generate.txt`.
 
-Like:
-"Model predicted 'mat' because it paid attention to 'sat' and 'on'"
+## Model Sizes
 
+Initial experiments and architectural testing are conducted on smaller-scale models which is 'scaled_down_GPT.py' which has 0.38M parameters.
 
-4. Your Own Minimal Attention Head
-Don’t use PyTorch’s nn.MultiheadAttention. Write it completely from scratch with just matmuls and softmax.
-
-Visualize the Q, K, V matrices and attention scores on a sample.
-
-
-5. Build a Training Playground
-Let the user toggle:
-
-Number of layers
-
-Block size
-
-Attention head count
-
-Plot loss curves and generation examples for each setup.
 

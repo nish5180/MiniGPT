@@ -1,0 +1,243 @@
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+from matplotlib import pyplot as plt
+import torch.optim as optim
+import optuna
+import numpy as np
+
+# Global constants that remain fixed
+batch_size = 64            # how many independent sequences will we process in parallel?
+max_iters = 2500
+eval_interval = 500
+n_embd = 384
+dropout = 0.2
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+# Load data and create vocabulary
+torch.manual_seed(1337)
+with open('input.txt', 'r', encoding='utf-8') as f:
+    text = f.read()
+
+chars = sorted(list(set(text)))
+vocab_size = len(chars)
+stoi = {ch: i for i, ch in enumerate(chars)}
+itos = {i: ch for i, ch in enumerate(chars)}
+encode = lambda s: [stoi[c] for c in s]
+decode = lambda l: ''.join([itos[i] for i in l])
+
+data = torch.tensor(encode(text), dtype=torch.long)
+n_data = int(0.9 * len(data))  # first 90% for train, rest for validation
+train_data = data[:n_data]
+val_data = data[n_data:]
+
+# Data loading functions now take block_size as a parameter
+def get_batch(split, block_size, batch_size):
+    data_source = train_data if split == 'train' else val_data
+    ix = torch.randint(len(data_source) - block_size, (batch_size,))
+    x = torch.stack([data_source[i:i + block_size] for i in ix])
+    y = torch.stack([data_source[i + 1:i + block_size + 1] for i in ix])
+    return x.to(device), y.to(device)
+
+@torch.no_grad()
+def estimate_loss(model, eval_iters, block_size, batch_size):
+    out = {}
+    model.eval()
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split, block_size, batch_size)
+            _, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean().item()
+    model.train()
+    return out
+
+# Define model components that now receive hyperparameters via their constructors
+class Head(nn.Module):
+    """One head of self-attention, now receiving block_size explicitly."""
+    def __init__(self, n_embd, head_size, block_size, dropout):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        # Register a lower-triangular matrix for masking; now uses the provided block_size.
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)   # (B,T,head_size)
+        q = self.query(x) # (B,T,head_size)
+        # Compute scaled dot-product attention scores
+        wei = q @ k.transpose(-2, -1) * k.shape[-1] ** -0.5  # (B, T, T)
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)
+        wei = self.dropout(wei)
+        v = self.value(x)  # (B,T,head_size)
+        out = wei @ v      # (B,T,head_size)
+        return out
+
+class MultiHeadAttention(nn.Module):
+    """Multiple heads of self-attention in parallel."""
+    def __init__(self, n_embd, num_heads, block_size, dropout):
+        super().__init__()
+        head_size = n_embd // num_heads
+        self.heads = nn.ModuleList([
+            Head(n_embd, head_size, block_size, dropout) for _ in range(num_heads)
+        ])
+        self.proj = nn.Linear(head_size * num_heads, n_embd)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.dropout(self.proj(out))
+        return out
+
+class FeedFoward(nn.Module):
+    """A simple linear layer followed by a non-linearity."""
+    def __init__(self, n_embd, dropout):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),
+            nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+class Block(nn.Module):
+    """Transformer block: communication followed by computation."""
+    def __init__(self, n_embd, num_heads, block_size, dropout):
+        super().__init__()
+        self.sa = MultiHeadAttention(n_embd, num_heads, block_size, dropout)
+        self.ffwd = FeedFoward(n_embd, dropout)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))
+        x = x + self.ffwd(self.ln2(x))
+        return x
+
+class GPTLanguageModel(nn.Module):
+    def __init__(self, block_size, n_layer, n_head, n_embd, dropout, vocab_size):
+        super().__init__()
+        self.block_size = block_size  # store block_size for use in generate()
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.blocks = nn.Sequential(*[
+            Block(n_embd, n_head, block_size, dropout) for _ in range(n_layer)
+        ])
+        self.ln_f = nn.LayerNorm(n_embd)  # final layer norm
+        self.lm_head = nn.Linear(n_embd, vocab_size)
+
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, idx, targets=None):
+        B, T = idx.shape
+        tok_emb = self.token_embedding_table(idx)  # (B, T, n_embd)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device))  # (T, n_embd)
+        x = tok_emb + pos_emb
+        x = self.blocks(x)
+        x = self.ln_f(x)
+        logits = self.lm_head(x)
+
+        if targets is None:
+            loss = None
+        else:
+            B, T, C = logits.shape
+            logits = logits.view(B * T, C)
+            targets = targets.view(B * T)
+            loss = F.cross_entropy(logits, targets)
+
+        return logits, loss
+
+    def generate(self, idx, max_new_tokens):
+        # Autoregressive generation using the stored block_size
+        for _ in range(max_new_tokens):
+            idx_cond = idx[:, -self.block_size:]
+            logits, _ = self(idx_cond)
+            logits = logits[:, -1, :]  # focus only on the last time step
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+        return idx
+
+# --- Objective function for Bayesian optimization ---
+def objective(trial):
+    # Suggest hyperparameters for this trial
+    block_size = trial.suggest_categorical('block_size', [64, 128, 256])
+    n_layer = trial.suggest_int('n_layer', 4, 10)
+    eval_iters = trial.suggest_categorical('eval_iters', [300, 400, 500])
+    learning_rate = trial.suggest_loguniform('learning_rate', 1e-4, 1e-3)
+    n_head = trial.suggest_int('n_heads', 4, 10)
+
+    # Build the model with the chosen hyperparameters
+    model = GPTLanguageModel(block_size, n_layer, n_head, n_embd, dropout, vocab_size).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+    # Training loop
+    for iter in range(max_iters):
+        if iter % eval_interval == 0 or iter == max_iters - 1:
+            losses = estimate_loss(model, eval_iters, block_size, batch_size)
+            print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        xb, yb = get_batch('train', block_size, batch_size)
+        logits, loss = model(xb, yb)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+
+    # Evaluate the model on the validation set and return the validation loss
+    losses = estimate_loss(model, eval_iters, block_size, batch_size)
+    val_loss = losses['val']
+    return val_loss
+
+
+
+# Run Bayesian optimization
+study = optuna.create_study(direction='minimize')
+study.optimize(objective, n_trials=20)
+print("Best hyperparameters: ", study.best_params)
+best_params = study.best_params
+
+best_model = GPTLanguageModel(
+    block_size=best_params['block_size'],
+    n_layer=best_params['n_layer'],
+    n_head=best_params['n_heads'],
+    n_embd=n_embd,
+    dropout=dropout,
+    vocab_size=vocab_size
+).to(device)
+optimizer = torch.optim.AdamW(best_model.parameters(), lr=best_params['learning_rate'])
+
+# Optionally, retrain the model with the best hyperparameters (here, for the same number of iterations)
+for iter in range(max_iters):
+    if iter % eval_interval == 0 or iter == max_iters - 1:
+        losses = estimate_loss(best_model, best_params['eval_iters'], best_params['block_size'], batch_size)
+        print(f"[Best Model] step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+    xb, yb = get_batch('train', best_params['block_size'], batch_size)
+    logits, loss = best_model(xb, yb)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+
+
+# Plot the optimization history
+optuna.visualization.plot_optimization_history(study).show()
+context = torch.zeros((1, 1), dtype=torch.long, device=device)
+open('generated.txt', 'w').write(decode(best_model.generate(context, max_new_tokens=1000)[0].tolist()))
+
+torch.save(best_model.state_dict(), 'best_gpt_model.pth')
+print("Best model saved as 'best_gpt_model.pth'")

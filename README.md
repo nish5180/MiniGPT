@@ -1,6 +1,6 @@
 # README
 
-This repository builds upon [Andrej Karpathy’s nanoGPT](https://github.com/karpathy/nanoGPT) with the goal of extending and customizing the architecture to explore tokenizer design, hyperparameter optimization, and encoder-decoder modifications.
+This repository builds upon [Andrej Karpathy’s GPT](https://github.com/karpathy/nanoGPT) with the goal of extending and customizing the architecture to explore tokenizer design, hyperparameter optimization, and encoder-decoder modifications.
 
 ## Project Goals
 

@@ -41,7 +41,7 @@ Install all required packages with:
 
 Initial experiments and architectural testing are conducted on smaller-scale models which is 'scaled_down_GPT.py' which has 0.38M parameters.
 
-##Sample of the output/ generated text:
+## Sample of the output/ generated text:
 
 
 BRUTUS:

@@ -45,7 +45,7 @@ Initial experiments and architectural testing are conducted on smaller-scale mod
 
 
 BRUTUS:
-By his present power,
+By his present power,\\
 We raise not to his visage all:
 just, be that may
 give him the rest, who is ground

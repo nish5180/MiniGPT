@@ -45,22 +45,34 @@ Initial experiments and architectural testing are conducted on smaller-scale mod
 
 
 BRUTUS:
-By his present power,\\
+By his present power,
+
 We raise not to his visage all:
+
 just, be that may
+
 give him the rest, who is ground
+
 to see you complies,
+
 For it is of out of.
 
 
 
 MARCIUS:
+
 Three could be
+
 Our word in their mar’s safety,
+
 when he hath ever run
+
 For can seem attainous tender that title:
+
 till Hath made him has him, he many child,
+
 And would anger him the painted shadow of his helm,
+
 And merited a sweets of liking is too.
 
 
